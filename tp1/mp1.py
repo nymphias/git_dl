@@ -1,11 +1,14 @@
 import matplotlib.pyplot as plt
-%matplotlib inline
+from tqdm import tqdm
 import numpy as np
+from keras.utils import np_utils
+from keras import backend as K
 
+import matplotlib.patches as patches
 # On some implementations of matplotlib, you may need to change this value
 IMAGE_SIZE = 72
 
-def generate_a_drawing(figsize, U, V, noise=0.0):
+def generate_a_drawing(figsize, U, V, noise=0.0, add_denoise = False):
     fig = plt.figure(figsize=(figsize,figsize))
     ax = plt.subplot(111)
     plt.axis('Off')
@@ -14,11 +17,14 @@ def generate_a_drawing(figsize, U, V, noise=0.0):
     ax.fill(U, V, "k")
     fig.canvas.draw()
     imdata = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)[::3].astype(np.float32)
-    imdata = imdata + noise * np.random.random(imdata.size)
+    imdata_noisy = imdata + noise * np.random.random(imdata.size)
     plt.close(fig)
-    return imdata
+    if add_denoise:
+        return imdata_noisy, imdata
 
-def generate_a_rectangle(noise=0.0, free_location=False):
+    return imdata_noisy
+
+def generate_a_rectangle(noise=0.0, free_location=False, add_denoise = False):
     figsize = 1.0    
     U = np.zeros(4)
     V = np.zeros(4)
@@ -38,10 +44,10 @@ def generate_a_rectangle(noise=0.0, free_location=False):
     U[2] = U[3] = bottom
     V[0] = V[3] = left
     V[1] = V[2] = right
-    return generate_a_drawing(figsize, U, V, noise)
+    return generate_a_drawing(figsize, U, V, noise, add_denoise)
 
 
-def generate_a_disk(noise=0.0, free_location=False):
+def generate_a_disk(noise=0.0, free_location=False, add_denoise = False):
     figsize = 1.0
     if free_location:
         center = np.random.random(2)
@@ -56,9 +62,9 @@ def generate_a_disk(noise=0.0, free_location=False):
         U[i] = center[0] + np.cos(t) * radius
         V[i] = center[1] + np.sin(t) * radius
         i = i + 1
-    return generate_a_drawing(figsize, U, V, noise)
+    return generate_a_drawing(figsize, U, V, noise, add_denoise)
 
-def generate_a_triangle(noise=0.0, free_location=False):
+def generate_a_triangle(noise=0.0, free_location=False, add_denoise = False):
     figsize = 1.0
     if free_location:
         U = np.random.random(3)
@@ -68,28 +74,19 @@ def generate_a_triangle(noise=0.0, free_location=False):
         middle = figsize/2
         U = (middle, middle+size, middle-size)
         V = (middle+size, middle-size, middle-size)
-    imdata = generate_a_drawing(figsize, U, V, noise)
+    imdata = generate_a_drawing(figsize, U, V, noise, add_denoise)
     return [imdata, [U[0], V[0], U[1], V[1], U[2], V[2]]]
 
 
-im = generate_a_rectangle(10, True)
-plt.imshow(im.reshape(IMAGE_SIZE,IMAGE_SIZE), cmap='gray')
-
-im = generate_a_disk(10)
-plt.imshow(im.reshape(IMAGE_SIZE,IMAGE_SIZE), cmap='gray')
-
-[im, v] = generate_a_triangle(20, False)
-plt.imshow(im.reshape(IMAGE_SIZE,IMAGE_SIZE), cmap='gray')
-
-
-def generate_dataset_classification(nb_samples, noise=0.0, free_location=False):
+def generate_dataset_classification(nb_samples, noise=0.0, free_location=False, verbose = False):
     # Getting im_size:
     im_size = generate_a_rectangle().shape[0]
     X = np.zeros([nb_samples,im_size])
     Y = np.zeros(nb_samples)
-    print('Creating data:')
-    for i in range(nb_samples):
-        if i % 10 == 0:
+    if verbose:
+        print('Creating data:')
+    for i in tqdm(range(nb_samples)):
+        if i % 10 == 0 and verbose:
             print(i)
         category = np.random.randint(3)
         if category == 0:
@@ -108,20 +105,20 @@ def generate_test_set_classification():
     Y_test = np_utils.to_categorical(Y_test, 3) 
     return [X_test, Y_test]
 
-def generate_dataset_regression(nb_samples, noise=0.0):
+def generate_dataset_regression(nb_samples, noise=0.0, verbose = False):
     # Getting im_size:
     im_size = generate_a_triangle()[0].shape[0]
     X = np.zeros([nb_samples,im_size])
     Y = np.zeros([nb_samples, 6])
-    print('Creating data:')
-    for i in range(nb_samples):
-        if i % 10 == 0:
+    if verbose:
+        print('Creating data:')
+    for i in tqdm(range(nb_samples)):
+        if i % 10 == 0 and verbose:
             print(i)
         [X[i], Y[i]] = generate_a_triangle(noise, True)
     X = (X + noise) / (255 + 2 * noise)
     return [X, Y]
 
-import matplotlib.patches as patches
 
 def visualize_prediction(x, y):
     fig, ax = plt.subplots(figsize=(5, 5))
@@ -141,4 +138,67 @@ def generate_test_set_regression():
     [X_test, Y_test] = generate_dataset_regression(300, 20)
     return [X_test, Y_test]
 
+
+def plot_standard(data_plots, labels, ylines, title, ylabel, xlabel, ax=None):
+    if ax == None:
+        f, ax = plt.subplots(1, figsize=(15, 8))
+
+    for i, data_plot in enumerate(data_plots):
+        ax.plot(np.arange(1, len(data_plot) + 1, 1), data_plot, label=labels[i])
+
+    ax.legend()
+    if ylines is not None:
+        for yline in ylines:
+            ax.axhline(y=yline, color='r', linestyle='--')
+
+    ax.set_title(title)
+    ax.set_ylabel(ylabel)
+    ax.set_xlabel(xlabel)
+
+def sort_Y(Y_set):
+    results = []
+    for pointy in Y_set:
+        xs = pointy[[0, 2, 4]]
+        ys = pointy[[1, 3, 5]]
+        ys = [x for _, x in sorted(zip(xs, ys))]
+        xs = sorted(xs)
+        result = np.zeros(6)
+        result[::2] = xs
+        result[1::2] = ys
+        results.append(result)
+
+    return np.asarray(results)
+
+def generate_dataset_denoise(nb_samples, noise_minmax=[10,40], free_location=False, verbose = False):
+    # Getting im_size:
+    im_size = generate_a_rectangle().shape[0]
+    X = np.zeros([nb_samples,im_size])
+    Y = np.zeros([nb_samples,im_size])
+    if verbose:
+        print('Creating data:')
+    for i in tqdm(range(nb_samples)):
+        if i % 10 == 0 and verbose:
+            print(i)
+        noise = np.random.randint(noise_minmax[0], noise_minmax[1])
+        category = np.random.randint(3)
+        if category == 0:
+            X[i],Y[i] = generate_a_rectangle(noise, free_location, add_denoise=True)
+        elif category == 1:
+            X[i],Y[i] = generate_a_disk(noise, free_location, add_denoise=True)
+        else:
+            X[i],Y[i] = generate_a_triangle(noise, free_location, add_denoise=True)[0]
+    X = X / 255
+    Y = np.array(Y > 0).astype(int)
+    return [X, Y]
+
+def generate_test_set_denoise():
+    np.random.seed(42)
+    [X_test, Y_test] = generate_dataset_denoise(300, [10,40])
+    return [X_test, Y_test]
+
+
+def r_square(y_true, y_pred):
+    SS_res =  K.sum(K.square(y_true - y_pred))
+    SS_tot = K.sum(K.square(y_true - K.mean(y_true)))
+    return ( 1 - SS_res/(SS_tot + K.epsilon()) )
 
